@@ -487,7 +487,7 @@
     var base = (r.tvl || 0) * baseMult;
     return h('div', { class: 'ladder' },
       h('div', { class: 'rung' }, h('span', { text: 'TVL, as the snapshot records it' }), h('b', { text: usd(r.tvl) })),
-      h('div', { class: 'rung op' }, h('span', { text: '× ' + baseMult.toFixed(3) + (r.peer_multiple !== null ? ' category peer multiple' + (r.peer_count ? ' (' + r.peer_count + ' peers)' : '') : ' base multiple') }), h('b', { text: usd(base) })),
+      h('div', { class: 'rung op' }, h('span', { text: '× ' + baseMult.toFixed(3) + (r.peer_multiple !== null ? ' category peer multiple' + (r.peer_count ? ' (' + r.peer_count + (r.peer_count === 1 ? ' peer' : ' peers') + ')' : '') : ' base multiple') }), h('b', { text: usd(base) })),
       h('div', { class: 'rung op' }, h('span', { text: '× growth ' + k.growthMult.toFixed(3) + ' (7-day ' + pct(r.growth) + ', damped toward no change)' }), h('b', { text: usd(base * k.growthMult) })),
       h('div', { class: 'rung op' }, h('span', { text: '× maturity ' + k.maturityMult.toFixed(3) + ' (' + ageText(r.age) + ' with no token)' }), h('b', { text: usd(base * k.growthMult * k.maturityMult) })),
       h('div', { class: 'rung total' }, h('span', { text: '= implied launch value' }), h('b', { text: usd(r.implied) }))
