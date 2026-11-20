@@ -509,7 +509,7 @@
     var base = (r.tvl || 0) * mult;
     return el('div', { class: 'ladder' },
       el('div', { class: 'rung' }, el('span', { text: 'TVL, as the snapshot records it' }), el('b', { text: usd(r.tvl) })),
-      el('div', { class: 'rung op' }, el('span', { text: '× ' + mult.toFixed(3) + (r.peer_multiple !== null ? ' category peer multiple' + (r.peer_count ? ' (' + r.peer_count + (r.peer_count === 1 ? ' live peer' : ' live peers') + ')' : '') : ' base multiple') }), el('b', { text: usd(base) })),
+      el('div', { class: 'rung op' }, el('span', { text: '× ' + mult.toFixed(3) + (r.peer_multiple !== null ? (r.peer_source === 'blended' ? ' peer multiple, blended toward the market' : r.peer_source === 'global' ? ' whole-market median multiple' : ' category peer multiple') + (r.peer_count ? ' (' + r.peer_count + (r.peer_count === 1 ? ' live peer' : ' live peers') + ')' : '') : ' base multiple') }), el('b', { text: usd(base) })),
       el('div', { class: 'rung op' }, el('span', { text: '× growth ' + k.growthMult.toFixed(3) + ' (7-day ' + pct(r.growth) + ', clamped ' + m.growth_floor + ' to ' + m.growth_cap + ' at ' + m.growth_weight + ' weight)' }), el('b', { text: usd(base * k.growthMult) })),
       el('div', { class: 'rung op' }, el('span', { text: '× maturity ' + k.maturityMult.toFixed(3) + ' (' + ageText(r.age) + ' with no token)' }), el('b', { text: usd(base * k.growthMult * k.maturityMult) })),
       el('div', { class: 'rung total' }, el('span', { text: '= implied launch value, rounded to whole dollars' }), el('b', { text: usd(r.implied) }))
@@ -652,6 +652,32 @@
 
   // ---------------------------------------------------------------- method
 
+  // The peer table the model actually read, printed whole: the market's own multiple and one per category,
+  // with the live peers behind each. It is the evidence for every row's multiple, not a sample of it.
+  function peerPanel() {
+    var p = DATA.peers;
+    if (!p || !Array.isArray(p.categories) || !p.global) return null;
+    var line = function (c) {
+      return el('tr', null,
+        el('td', { class: 'text', text: c.label }),
+        el('td', { text: String(c.sample) }),
+        el('td', { text: c.p25.toFixed(3) + '×' }),
+        el('td', { text: c.median.toFixed(3) + '×' }),
+        el('td', { text: c.p75.toFixed(3) + '×' }));
+    };
+    return [
+      el('h2', { text: 'Where each multiple comes from' }),
+      el('p', { text: 'Every multiple on the board is built from this snapshot alone: market cap over TVL for the ' + p.observations + ' protocols whose token already trades, clipped to the market\'s tenth and ninetieth percentile, then pooled by category. The market as a whole prices a dollar of TVL at ' + p.global.median.toFixed(3) + '×, on ' + p.global.sample + ' observations. A category with few live peers is blended toward that figure, so one comparable cannot set the price of every protocol in its category, and the detail page says when that happened.' }),
+      el('table', { class: 'constants' },
+        el('caption', { text: 'Category multiples from this snapshot, most live peers first.' }),
+        el('thead', null, el('tr', null,
+          el('th', { scope: 'col', text: 'Category' }), el('th', { scope: 'col', class: 'r', text: 'Live peers' }),
+          el('th', { scope: 'col', class: 'r', text: '25th' }), el('th', { scope: 'col', class: 'r', text: 'Median' }),
+          el('th', { scope: 'col', class: 'r', text: '75th' }))),
+        el('tbody', null, p.categories.slice(0, 12).map(line)))
+    ];
+  }
+
   function methodView() {
     var m = MODEL;
     clear(APP);
@@ -665,6 +691,7 @@
       el('p', { text: m.implied || 'TVL times the category peer multiple, damped by growth and by age, rounded to whole dollars.' }),
       el('p', { text: m.confidence_text || 'The band applies the category\'s percentile multiples to the same TVL, so it widens wherever the category disagrees with itself.' }),
       el('p', { text: 'The peer multiple is winsorised to ' + m.multiple_floor + '× to ' + m.multiple_ceiling + '×, so one outlier in a category cannot set the price of every protocol in it.' }),
+      peerPanel(),
       el('h2', { text: 'The constants' }),
       el('table', { class: 'constants' },
         el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Constant' }), el('th', { scope: 'col', text: 'Value' }))),
