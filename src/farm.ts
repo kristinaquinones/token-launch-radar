@@ -227,6 +227,11 @@ function gasFor(p: FarmProtocol): number {
   return GAS_USD[first] ?? FARM_MODEL.gas_per_tx_usd;
 }
 
+/** A gas figure in whole dollars, never below one: a transaction costs something, however cheap the chain. */
+function gasUsd(n: number): number {
+  return Math.max(1, Math.round(n));
+}
+
 /** The position a plan opens: the TVL band, raised so what the plan spends on gas stays a small share. */
 export function capitalFor(p: FarmProtocol): number {
   const band = p.tvl_usd >= 5_000_000_000 ? 1000 : p.tvl_usd >= 1_000_000_000 ? 500 : p.tvl_usd >= 100_000_000 ? 250 : 100;
@@ -454,12 +459,12 @@ export function farmSteps(p: FarmProtocol, age: number | null, capital: number, 
   return [
     {
       text: `Use a fresh wallet that holds only the ${usd(capital)} you plan to farm, and keep its seed phrase offline: a farming wallet should never be a wallet you sign other things with.`,
-      cost: `${usd(Math.round(gas * 2))} to create and fund it`,
+      cost: `${usd(gasUsd(gas * 2))} to create and fund it`,
       time: '10 minutes',
     },
     {
       text: action,
-      cost: `${usd(capital)} of capital plus about ${usd(Math.round(gas * 2))} of gas`,
+      cost: `${usd(capital)} of capital plus about ${usd(gasUsd(gas * 2))} of gas`,
       time: '15 minutes to set up',
     },
     {
@@ -479,7 +484,7 @@ export function farmSteps(p: FarmProtocol, age: number | null, capital: number, 
     },
     {
       text: `Withdraw, then write the wallet address, every date and every transaction in a farm log, so the position can be repeated on the next protocol or unwound if ${p.name} changes its terms.`,
-      cost: `${usd(Math.round(gas * 1.5))} of gas to exit, and nothing for the log`,
+      cost: `${usd(gasUsd(gas * 1.5))} of gas to exit, and nothing for the log`,
       time: '20 minutes',
     },
   ];
@@ -539,7 +544,7 @@ export function buildFarmPlan(p: FarmProtocol, options: FarmOptions = {}): FarmP
   // The qualifying actions have to fit inside the hold the plan asks for: a plan that asks you to
   // act in week five of a thirty-day window reads as boilerplate. Whole weeks only, always at least one.
   const weeks = Math.max(1, Math.floor(hold / 7));
-  const cost = Math.round(gas * 2 + gas * 0.6 * weeks + gas * 1.5);
+  const cost = Math.max(1, Math.round(gas * 2 + gas * 0.6 * weeks + gas * 1.5));
   const factors = riskFactors(p, age, cost, capital);
   const risk = riskOf(factors);
   const value = valueOf(p, capital, cost, implied, risk.score, options.implied_band ?? null);
