@@ -1,0 +1,12 @@
+node_modules/
+out/
+.DS_Store
+
+# transcripts are uploaded to make.fun, never committed
+transcripts.tar.gz
+*.tar.gz
+
+# local secrets and keys never belong in the repository
+.env
+*.keypair.json
+wallet*.json

@@ -1,0 +1,14 @@
+{
+  "name": "token-launch-radar",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ranks protocols that record no token by what a launch could be worth, and says how to farm each one.",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "node main.ts --input input/snapshot.json --output out"
+  },
+  "license": "MIT"
+}
