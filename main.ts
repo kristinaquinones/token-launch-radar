@@ -3,13 +3,12 @@
 //
 // The work is split three ways and this file only assembles it:
 //
-//   src/eligibility.ts  classifyProtocol(protocol, snapshot) -> { eligible, reason }
+//   src/eligibility.ts  classifyProtocol(protocol, snapshot) -> { eligible, reason, code }
 //                       says whether a protocol records no token and is not a wrapped, staked or
-//                       bridged product of one that trades, and why it was left out when it is not.
-//   src/valuation.ts    buildPeerModel(snapshot) -> peers
-//                       valueProtocol(protocol, peers, asOf) -> valuation
+//                       bridged product of one that trades, and why it is out when it is.
+//   src/valuation.ts    buildPeerModel(snapshot) -> peers, valueProtocol(protocol, peers, asOf)
 //                       prices a protocol from its category's peer multiples, its growth and its age.
-//   src/farm.ts         farmPlan(protocol, valuation, ageDays) -> plan
+//   src/farm.ts         farmPlan(protocol, valuation, ageDays)
 //                       the steps to farm it, what they cost, the risk and the expected value.
 //
 // Output, all under --output (MAKEFUN_OUTPUT_DIR, else /output):
@@ -33,10 +32,20 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-board.ts';
 import { classifyProtocol } from './src/eligibility.ts';
+import * as valuationModule from './src/valuation.ts';
 import { buildPeerModel, valueProtocol } from './src/valuation.ts';
-import { farmPlan } from './src/farm.ts';
+import { FARM_ASSUMPTIONS, FARM_MODEL, farmPlan } from './src/farm.ts';
+
+/** The valuation module's constants object: it is named VALUATION, or MODEL in an earlier revision. */
+const VALUATION_CONSTANTS: unknown =
+  (valuationModule as unknown as Record<string, unknown>).VALUATION ?? (valuationModule as unknown as Record<string, unknown>).MODEL ?? null;
 
 const here = fileURLToPath(new URL('.', import.meta.url));
+
+/** What the three modules answer, read off their own signatures so this file cannot drift from them. */
+type Verdict = ReturnType<typeof classifyProtocol>;
+type Valuation = ReturnType<typeof valueProtocol>;
+type Plan = ReturnType<typeof farmPlan>;
 
 /** The gate's own limits (reference/gate.json), so a bad board fails here and not at submission. */
 const MIN_ROWS = 100;
@@ -49,7 +58,7 @@ const STEP_MAX_CHARS = 600;
 const TEXT_MAX_BYTES = 65_536;
 const SCREENSHOT_CAPS = { max: 4, max_bytes: 524_288 };
 const DASHBOARD_CAPS = { max_files: 400, max_bytes: 4_194_304 };
-const PLAIN_FILE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
+const PLAIN_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
 const LIVE_ROWS = 24;
 
 // ---------------------------------------------------------------- the snapshot
@@ -114,42 +123,9 @@ export function parseSnapshot(text: string): Snapshot {
   return { as_of: o.as_of, source: o.source, floor_usd: o.floor_usd, protocols, watchlist: o.watchlist as string[] };
 }
 
-// ---------------------------------------------------------------- the modules' answers
-
-/** What src/eligibility.ts says about a protocol. Extra fields are ignored. */
-export interface Verdict {
-  eligible: boolean;
-  reason: string;
-}
-
-/** What src/valuation.ts prices a protocol at. Extra fields are ignored. */
-export interface Valuation {
-  implied_value_usd: number;
-  peer_multiple?: number;
-  peer_count?: number;
-  growth_multiplier?: number;
-  maturity_multiplier?: number;
-  age_days?: number | null;
-  confidence?: { low_usd?: number; high_usd?: number; level?: number };
-  rationale?: string;
-}
-
-/** A farm step, either as text or as its parts. */
-export type FarmStepInput = string | { text?: string; action?: string; cost?: string; time?: string };
-
-/** What src/farm.ts plans for a protocol. Extra fields are ignored. */
-export interface FarmPlan {
-  steps: FarmStepInput[];
-  capital_usd?: number;
-  risk?: string;
-  expected_value_usd?: number;
-  hold_days?: number;
-}
-
 // ---------------------------------------------------------------- one row
 
-/** One row of board.json. The gate reads rank, slug, name, implied_value_usd and farm_steps; the rest is
- * what the dashboard shows and what makes the number auditable. */
+/** One row of board.json: the gate's five fields, then the working that produced them. */
 export interface BoardRow {
   rank: number;
   slug: string;
@@ -174,14 +150,29 @@ export interface BoardRow {
     maturity_multiplier: number;
     rationale: string;
   };
-  farm: { capital_usd: number; risk: string; expected_value_usd: number };
+  farm: {
+    capital_usd: number;
+    cost_usd: number;
+    hold_days: number;
+    risk: string;
+    risk_score: number;
+    risk_level: string;
+    expected_value_usd: number;
+    multiple: number;
+    verdict: string;
+    verdict_note: string;
+    why_now: string;
+  };
   farm_steps: string[];
 }
 
-/** A protocol the board left out, with the module's reason, so the page can show the exclusions. */
+/** A protocol the board left out, with the module's code and reason, so the page can show them. */
 interface Exclusion {
   slug: string;
   name: string;
+  category: string | null;
+  tvl_usd: number;
+  code: string;
   reason: string;
 }
 
@@ -200,15 +191,8 @@ const finite = (value: unknown, fallback: number): number => (typeof value === '
 const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 
-/** A plan from either shape src/farm.ts may answer: the object with steps, or the steps alone. */
-function normalizePlan(raw: FarmPlan | FarmStepInput[]): FarmPlan {
-  if (Array.isArray(raw)) return { steps: raw };
-  if (raw === null || typeof raw !== 'object') return { steps: [] };
-  return raw;
-}
-
 /** A step as one string within the gate's 20 to 600 characters: the action, then its cost and its time. */
-function formatStep(step: FarmStepInput): string {
+function formatStep(step: string | { text?: string; action?: string; cost?: string; time?: string }): string {
   let text: string;
   if (typeof step === 'string') {
     text = step;
@@ -221,9 +205,16 @@ function formatStep(step: FarmStepInput): string {
     if (time.length > 0) text = `${text} Time: ${time.replace(/\.$/, '')}.`;
   }
   text = text.replace(/\s+/g, ' ').trim();
-  if (text.length < STEP_MIN_CHARS) text = `${text} Hold the position and check the protocol's own page before you act.`.replace(/\s+/g, ' ').trim();
+  if (text.length < STEP_MIN_CHARS) text = `${text} Read the protocol's own page before you act.`.replace(/\s+/g, ' ').trim();
   if (text.length > STEP_MAX_CHARS) text = `${text.slice(0, STEP_MAX_CHARS - 3).trimEnd()}...`;
   return text;
+}
+
+/** The plan's board strings: the module's own if it has them, else its steps formatted here. */
+function boardSteps(plan: Plan): string[] {
+  const ready = (plan as { farm_steps?: unknown }).farm_steps;
+  const source = Array.isArray(ready) && ready.every((s) => typeof s === 'string') ? (ready as string[]) : (plan.steps ?? []);
+  return source.map(formatStep).filter((s) => s.length >= STEP_MIN_CHARS).slice(0, STEPS_MAX);
 }
 
 /** The whole board: every protocol the modules would rank, priced, planned and sorted by implied value. */
@@ -240,27 +231,33 @@ export function assembleBoard(snapshot: Snapshot): { rows: BoardRow[]; excluded:
       verdict = classifyProtocol(protocol, snapshot);
     } catch (err) {
       if (onWatchlist) throw new Error(`${protocol.slug} is on the watchlist and the classifier refused it: ${(err as Error).message}`);
-      excluded.push({ slug: protocol.slug, name: protocol.name, reason: `not classified: ${(err as Error).message}` });
+      excluded.push({ slug: protocol.slug, name: protocol.name, category: protocol.category, tvl_usd: protocol.tvl_usd, code: 'classifier-error', reason: (err as Error).message });
       continue;
     }
     if (!verdict.eligible && !onWatchlist) {
-      excluded.push({ slug: protocol.slug, name: protocol.name, reason: verdict.reason });
+      excluded.push({
+        slug: protocol.slug,
+        name: protocol.name,
+        category: protocol.category,
+        tvl_usd: protocol.tvl_usd,
+        code: (verdict as { code?: string | null }).code ?? 'excluded',
+        reason: verdict.reason,
+      });
       continue;
     }
     let valuation: Valuation;
     try {
       valuation = valueProtocol(protocol, peers, snapshot.as_of);
     } catch (err) {
-      // A watchlist slug must still be covered: the gate reads coverage before it reads anything else.
       if (onWatchlist) throw new Error(`${protocol.slug} is on the watchlist and the valuation refused it: ${(err as Error).message}`);
-      excluded.push({ slug: protocol.slug, name: protocol.name, reason: `not priced: ${(err as Error).message}` });
+      excluded.push({ slug: protocol.slug, name: protocol.name, category: protocol.category, tvl_usd: protocol.tvl_usd, code: 'not-priced', reason: (err as Error).message });
       continue;
     }
-    const plan = normalizePlan(farmPlan(protocol, valuation, valuation.age_days ?? null));
-    const steps = (plan.steps ?? []).map(formatStep).filter((s) => s.length >= STEP_MIN_CHARS).slice(0, STEPS_MAX);
+    const plan = farmPlan(protocol, valuation, valuation.age_days ?? null);
+    const steps = boardSteps(plan);
     if (steps.length < STEPS_MIN) throw new Error(`${protocol.slug} got ${steps.length} usable farm steps: the gate needs ${STEPS_MIN} to ${STEPS_MAX}`);
+    const confidence = valuation.confidence ?? { low_usd: 0, high_usd: 0, level: 0 };
     const implied = Math.round(clamp(finite(valuation.implied_value_usd, 0), 1, IMPLIED_MAX_USD));
-    const confidence = valuation.confidence ?? {};
     scored.push({
       slug: protocol.slug,
       name: protocol.name,
@@ -290,8 +287,16 @@ export function assembleBoard(snapshot: Snapshot): { rows: BoardRow[]; excluded:
       },
       farm: {
         capital_usd: Math.round(clamp(finite(plan.capital_usd, 100), 0, 1_000_000)),
-        risk: typeof plan.risk === 'string' ? plan.risk : 'medium',
+        cost_usd: Math.round(clamp(finite(plan.cost_usd, 0), 0, 1_000_000)),
+        hold_days: Math.round(clamp(finite(plan.hold_days, 30), 0, 3_650)),
+        risk: String(plan.risk),
+        risk_score: Math.round(clamp(finite(plan.risk_detail?.score, 50), 0, 100)),
+        risk_level: String(plan.risk_detail?.level ?? 'moderate'),
         expected_value_usd: Math.round(clamp(finite(plan.expected_value_usd, implied), 0, IMPLIED_MAX_USD)),
+        multiple: round4(finite(plan.value?.multiple, 0)),
+        verdict: String(plan.verdict),
+        verdict_note: String(plan.verdict_note ?? ''),
+        why_now: String(plan.why_now ?? ''),
       },
       farm_steps: steps,
     });
@@ -345,16 +350,18 @@ export function boardIssue(rows: BoardRow[], snapshot: Snapshot): string | null 
 
 /** The board as the page reads it: the gate's fields, the model's inputs, and the plan, one object. */
 function radarData(snapshot: Snapshot, rows: BoardRow[], excluded: Exclusion[], live: LiveRow[]): Record<string, unknown> {
-  const byReason = new Map<string, number>();
+  const byCode = new Map<string, { count: number; reason: string }>();
   for (const e of excluded) {
-    const key = e.reason.length > 90 ? `${e.reason.slice(0, 87)}...` : e.reason;
-    byReason.set(key, (byReason.get(key) ?? 0) + 1);
+    const found = byCode.get(e.code);
+    if (found === undefined) byCode.set(e.code, { count: 1, reason: e.reason });
+    else found.count += 1;
   }
   return {
     as_of: snapshot.as_of,
     source: snapshot.source,
     floor_usd: snapshot.floor_usd,
     model_version: 'radar-2',
+    protocol_count: snapshot.protocols.length,
     watchlist_size: snapshot.watchlist.length,
     board_size: rows.length,
     early_size: rows.filter((r) => !r.on_watchlist).length,
@@ -372,7 +379,7 @@ function radarData(snapshot: Snapshot, rows: BoardRow[], excluded: Exclusion[], 
       age_days: r.age_days,
       on_watchlist: r.on_watchlist,
       implied_value_usd: r.implied_value_usd,
-      confidence: r.confidence,
+      confidence: { ...r.confidence, label: r.confidence.level >= 0.45 ? 'high' : r.confidence.level >= 0.2 ? 'medium' : 'low' },
       peer_multiple: r.model.peer_multiple,
       peer_count: r.model.peer_count,
       growth_multiplier: r.model.growth_multiplier,
@@ -382,15 +389,19 @@ function radarData(snapshot: Snapshot, rows: BoardRow[], excluded: Exclusion[], 
       farm_steps: r.farm_steps,
     })),
     live,
+    excluded: excluded.map((e) => ({ slug: e.slug, name: e.name, reason: e.reason })),
     exclusions: {
       count: excluded.length,
-      by_reason: [...byReason.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count),
-      rows: excluded.slice(0, 120),
+      by_code: [...byCode.entries()].map(([code, v]) => ({ code, count: v.count, reason: v.reason })).sort((a, b) => b.count - a.count),
+      rows: excluded,
     },
-    method: {
-      implied_value: 'Category peer multiples from protocols that already trade, damped by growth and age, applied to TVL.',
-      confidence: 'The band is the 10th to 90th percentile of the peer multiple applied to the same TVL, so it widens where the category disagrees with itself.',
-      exclusions: 'Every protocol left out carries the reason it was left out: a token that already trades, a versioned pool, or a wrapped, staked or bridged product of one that does.',
+    model: {
+      valuation: VALUATION_CONSTANTS,
+      farm: FARM_MODEL,
+      farm_assumptions: FARM_ASSUMPTIONS,
+      implied_value: 'TVL times the category peer multiple, damped by growth and by age, rounded to whole dollars.',
+      confidence: 'The band applies the peers 25th and 75th percentile multiples to the same TVL, so it widens wherever the category disagrees with itself, and it reads as support, not as a chance the token launches.',
+      exclusions: 'Every protocol left out carries the rule that left it out: a token that already trades, a versioned pool, a wrapped or staked asset, a bridge product, or an exchange.',
     },
   };
 }
@@ -435,7 +446,7 @@ function dashboardIssue(dir: string): string | null {
   if (!files.some((rel) => rel.endsWith('.js'))) return 'dashboard/ has no .js file';
   for (const rel of files) {
     for (const segment of rel.split('/')) {
-      if (!PLAIN_FILE.test(segment)) return `dashboard/${rel} has a name that is not plain (${segment})`;
+      if (!PLAIN_NAME.test(segment)) return `dashboard/${rel} has a name that is not plain (${segment})`;
     }
   }
   return null;
@@ -481,9 +492,9 @@ if (shots.length < 3) {
   process.stderr.write(`token radar: screenshots/ holds ${shots.length} image${shots.length === 1 ? '' : 's'}: hand in 3, the board, a detail view and a filtered view\n`);
   process.exit(1);
 }
-for (const name of shots) {
-  if (!PLAIN_FILE.test(name)) {
-    process.stderr.write(`token radar: screenshots/${name}: a name is letters, digits and . _ -, 1 to 128 characters\n`);
+for (const rel of shots) {
+  if (!PLAIN_NAME.test(rel)) {
+    process.stderr.write(`token radar: screenshots/${rel}: a name is letters, digits and . _ -, 1 to 128 characters\n`);
     process.exit(1);
   }
 }

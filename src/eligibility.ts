@@ -1,27 +1,33 @@
-// Who is still waiting on a token: the eligibility half of the token radar.
+// src/eligibility.ts: which protocols the radar ranks, and why every other one is out.
 //
-// The snapshot's watchlist is the house's own answer: every protocol at or above the floor that
-// records no token and is not a wrapped, staked or bridged product of one that already trades.
-// This module re-derives that judgement from the ten fields the snapshot carries, so the radar can
-// apply it below the floor as well, and show its working for every row it drops.
+// A protocol is the radar's subject when it records no token and stands on its own. Two things take
+// it out, and both are facts in the snapshot rather than a judgement about the project:
 //
-// Two rule sources, kept apart on purpose:
+//   1. a token already trades (a market cap, a CoinGecko id or a symbol on record): the launch
+//      happened, so the market's own number stands and the model does not price it again;
+//   2. the tokenless protocol is really someone else's token: a wrapped, staked, restaked or bridged
+//      product, an exchange's own book, or a versioned pool of another protocol. Ranking one of
+//      those would put a second name on one asset and inflate the board with it.
 //
-//   house  the rule input/README.md states, reproducible from the file: no token recorded, no
-//          version marker at the end of the name, a category that is not a derivative, no whole
-//          word wrapped, staked or staking in the name, and no exchange brand at the front.
-//   radar  the extensions the file cannot state, because DefiLlama's parentProtocol field is not
-//          one of its ten: restaking, staking pool and staking vault categories, bridge categories
-//          the house does not name, and a compact wrapper ticker (wTAO, stHYPE, cbETH). Each one
-//          is labelled, counted, and switched off with { radarExtensions: false }.
+// The rules come in two families, and the file keeps them apart because only one is the house's:
 //
-// A slug the snapshot's watchlist names is never excluded here. That list is the gate's coverage
-// row, so a board carrying the radar has to carry every slug on it whatever these rules think.
-// Conflicts are reported in `universe.conflicts` and missing slugs in `universe.missing`, so the
-// caller can fail loudly instead of quietly dropping a row the scorer requires.
+//   house  the rule input/README.md states, reproducible from the snapshot's own fields: no token
+//          recorded, no version marker at the end of the name, a category that is not a derivative,
+//          no whole word wrapped, staked or staking in the name, and no exchange brand at the front.
+//   radar  what the snapshot cannot state, because DefiLlama's parentProtocol field is not one of
+//          its ten: restaking, staking pool and staking vault categories, the bridges the house does
+//          not name, and a compact wrapper ticker (wTAO, stHYPE, cbETH). Each is labelled, counted
+//          and switchable with { radarExtensions: false }.
+//
+// Every exclusion carries a sentence a reader can check against the snapshot's own fields, and the
+// dashboard shows it in its Set aside view.
+//
+// The watchlist is coverage, never permission. A slug the watchlist names is ranked even when a rule
+// here would have excluded it, because the gate reads coverage first, and this file reports the
+// disagreement in `conflicts` rather than hiding it.
 
-/** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
-export interface ProtocolRecord {
+/** The snapshot's ten-field protocol record, as this module reads it. */
+export interface Protocol {
   slug: string;
   name: string;
   category: string | null;
@@ -34,16 +40,17 @@ export interface ProtocolRecord {
   symbol: string | null;
 }
 
-/** The part of the snapshot this module reads. main.ts's Snapshot fits it as it stands. */
-export interface EligibilitySnapshot {
-  as_of: string;
-  floor_usd: number;
-  protocols: ProtocolRecord[];
+/** The part of the snapshot this classifier consults. main.ts's Snapshot fits it as it stands. */
+export interface SnapshotLike {
   watchlist: string[];
+  /** The watchlist's floor; a protocol under it is an early radar row, never a reason to exclude one. */
+  floor_usd?: number;
+  as_of?: string;
 }
 
-/** Why a protocol is not a pre-token candidate. One code per excluded row, the first that fires. */
+/** Why a protocol is not a pre-token candidate. One code per excluded row, the first rule that fires. */
 export type ExclusionCode =
+  | 'no-tvl'
   | 'token-recorded'
   | 'versioned'
   | 'wrapped'
@@ -53,12 +60,7 @@ export type ExclusionCode =
   | 'exchange';
 
 /** A non-fatal observation about an eligible row: it ranks, with a caveat attached. */
-export type SignalCode =
-  | 'house-list'
-  | 'below-floor'
-  | 'unlisted-above-floor'
-  | 'product-line'
-  | 'multi-chain';
+export type SignalCode = 'house-list' | 'below-floor' | 'unlisted-above-floor' | 'product-line' | 'multi-chain';
 
 /** Which rule family decided a row: the house's own rule, or an extension this module adds. */
 export type RuleSource = 'house' | 'radar';
@@ -66,71 +68,64 @@ export type RuleSource = 'house' | 'radar';
 /** Where a protocol ended up: the house's list, the radar's own rows, or out. */
 export type Tier = 'watchlist' | 'radar' | 'excluded';
 
-/** One exclusion rule, as the dashboard renders it. */
+/** One exclusion rule, as the dashboard's Set aside view renders it. */
 export interface ExclusionRule {
   code: ExclusionCode;
   /** Chip text: what kind of product this row is. */
   label: string;
-  /** The one line the board carries as `reason`: short enough to group and count. */
-  summary: string;
-  /** The longer sentence under it, for the exclusions view. */
+  /** The sentence shape for one row; `detail` on the verdict fills in the protocol's own fields. */
   why: string;
   source: RuleSource;
 }
 
-/**
- * The exclusion rules, in the order they are tested. `summary` is the line a board row carries,
- * `why` is the sentence the exclusions view shows, and `source` says whether the sealed input
- * states the rule (house) or this module adds it (radar).
- */
+/** The rules, keyed by their code. `source` says whether the sealed input states the rule or this file adds it. */
 export const EXCLUSION_RULES: Record<ExclusionCode, ExclusionRule> = {
+  'no-tvl': {
+    code: 'no-tvl',
+    label: 'No TVL recorded',
+    why: 'no TVL is recorded, so no position can be sized and no number can be modelled.',
+    source: 'house',
+  },
   'token-recorded': {
     code: 'token-recorded',
     label: 'Token already recorded',
-    summary: 'Token already recorded: the market prices this protocol.',
-    why: 'A symbol, a CoinGecko id or a market cap is on the record, so the market already prices this protocol.',
+    why: 'a token field is set, so its launch already happened and the market owns the number.',
     source: 'house',
   },
   versioned: {
     code: 'versioned',
     label: 'Version of another protocol',
-    summary: 'Version of another protocol: a pool or a release, not a protocol of its own.',
-    why: 'The name ends in a release marker (V2, v3, 2.0), so this row is a pool or a version of another protocol.',
+    why: 'the name ends in a version marker, so it is a pool or a release of another protocol.',
     source: 'house',
   },
   wrapped: {
     code: 'wrapped',
     label: 'Wrapped asset',
-    summary: 'Wrapped asset: it wraps an asset that already trades.',
-    why: 'The name carries the whole word wrapped, or a wrapper ticker, so the row is an asset that already trades in another form.',
+    why: 'it wraps an asset that already trades, so its token inherits that asset instead of launching one.',
     source: 'house',
   },
   staked: {
     code: 'staked',
     label: 'Staked asset',
-    summary: 'Staked asset: it holds a token that already trades.',
-    why: 'The name or the category says staked or staking, so the row holds a token that already trades rather than waiting on one.',
+    why: 'it is a staked position in an asset that already trades, so its receipt is a second name for one asset.',
     source: 'house',
   },
   restaked: {
     code: 'restaked',
     label: 'Restaked asset',
-    summary: 'Restaked asset: it restakes a token that already trades.',
-    why: 'The row restakes an asset that already trades, so its value follows that asset rather than a launch of its own.',
+    why: 'it restakes an asset that already trades, so its receipt is a claim on that asset, not a launch.',
     source: 'house',
   },
   bridged: {
     code: 'bridged',
     label: 'Bridge product',
-    summary: 'Bridge product: it moves an asset that already trades.',
-    why: 'The category or the name is a bridge, which moves an asset that already trades instead of issuing one.',
+    why: 'it represents an asset moved from another chain, so its supply is a claim on tokens that already exist.',
     source: 'house',
   },
   exchange: {
     code: 'exchange',
     label: 'Exchange product',
-    summary: 'Exchange product: the exchange is the claim, not a new token.',
-    why: 'The row is an exchange or carries an exchange brand at the front of its name, so the claim inside it is the exchange.',
+    why: 'it is an exchange or an exchange-branded product, so the claim inside it is the exchange, not a new protocol.',
     source: 'house',
   },
 };
@@ -144,32 +139,35 @@ export const SIGNAL_LABELS: Record<SignalCode, string> = {
   'multi-chain': 'Deployed on three or more chains',
 };
 
-/** One excluded row's reason, ready to render and to count. */
-export interface Exclusion {
-  code: ExclusionCode;
-  label: string;
-  summary: string;
-  detail: string;
-  source: RuleSource;
-}
-
-/** The verdict on one protocol. */
+/** What main.ts reads from this module. Extra fields are ignored there. */
 export interface Verdict {
+  eligible: boolean;
+  /** The sentence a board row carries when the protocol is out, and '' when it ranks. */
+  reason: string;
+  /** The rule that decided it, or null when it ranks. */
+  code: ExclusionCode | null;
+  /** True when the snapshot's own watchlist names this slug. */
+  on_watchlist: boolean;
   slug: string;
   name: string;
   category: string | null;
   tvl_usd: number;
   tier: Tier;
-  eligible: boolean;
-  /** The line a board row carries for an excluded protocol, and '' for one that ranks. */
-  reason: string;
   /** True when the protocol's TVL is under the snapshot's floor: an early radar row. */
   below_floor: boolean;
   /** How sure this is a protocol still waiting on a token, never how good an entry it is. */
   confidence: 'high' | 'medium' | 'low';
-  /** The reason it is out, or null when it is in. */
+  /** The rule and the fields it saw, for the Set aside view. */
   exclusion: Exclusion | null;
   signals: SignalCode[];
+}
+
+/** One excluded row's rule and the sentence for it. */
+export interface Exclusion {
+  code: ExclusionCode;
+  label: string;
+  detail: string;
+  source: RuleSource;
 }
 
 /** How the caller wants this module to behave. */
@@ -196,7 +194,7 @@ export interface EligibilityStats {
   excluded: number;
 }
 
-/** Everything this module produces for one snapshot. */
+/** Everything this module produces for one snapshot, for a caller that wants the whole split. */
 export interface EligibilityUniverse {
   as_of: string;
   floor_usd: number;
@@ -208,7 +206,7 @@ export interface EligibilityUniverse {
   watchlist_verdicts: Verdict[];
   counts: Record<ExclusionCode, number>;
   stats: EligibilityStats;
-  /** Watchlist slugs a rule above would have excluded: must stay empty, else the rules are wrong. */
+  /** Watchlist slugs a rule would have excluded: a disagreement, reported rather than hidden. */
   conflicts: string[];
   /** Watchlist slugs the snapshot's protocols array does not carry: cannot be scored at all. */
   missing: string[];
@@ -276,6 +274,26 @@ const PRODUCT_WORDS: ReadonlySet<string> = new Set([
   'index',
 ]);
 
+/** A protocol records a token when any of its three token fields is set. */
+export function tokenRecorded(protocol: Protocol): boolean {
+  return protocol.mcap_usd !== null || protocol.gecko_id !== null || protocol.symbol !== null;
+}
+
+/** The token a protocol records, in words, or null when it records none. */
+function recordedToken(protocol: Protocol): string | null {
+  if (protocol.symbol !== null && protocol.symbol.length > 0) return protocol.symbol;
+  if (protocol.gecko_id !== null && protocol.gecko_id.length > 0) return `the CoinGecko id ${protocol.gecko_id}`;
+  if (protocol.mcap_usd !== null) return 'a market cap';
+  return null;
+}
+
+/** Whole dollars, short, for a reason sentence. */
+function usdShort(n: number): string {
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  return `$${Math.round(n)}`;
+}
+
 /** The exclusion a category alone decides, or null. */
 function categoryRule(category: string | null, radarExtensions: boolean): ExclusionCode | null {
   if (category === null) return null;
@@ -310,54 +328,43 @@ export function readsAsProductLine(name: string): boolean {
   return PRODUCT_WORDS.has(parts[parts.length - 1] as string);
 }
 
-/** The token a protocol records, in words, or null when it records none. */
-function recordedToken(protocol: ProtocolRecord): string | null {
-  if (protocol.symbol !== null && protocol.symbol.length > 0) return protocol.symbol;
-  if (protocol.gecko_id !== null && protocol.gecko_id.length > 0) return `CoinGecko id ${protocol.gecko_id}`;
-  if (protocol.mcap_usd !== null) return 'a market cap';
-  return null;
-}
-
-/** The sentence the exclusions view shows for one row: which rule fired, and what it saw. */
-function exclusionDetail(protocol: ProtocolRecord, code: ExclusionCode, token: string | null): string {
-  const category = protocol.category === null ? '' : ` (category ${protocol.category})`;
-  switch (code) {
-    case 'token-recorded':
-      return `${protocol.name} records ${token ?? 'a token'}, so the market already prices it.`;
-    case 'versioned':
-      return `${protocol.name} ends in a version marker, so it is a pool or a release of another protocol.`;
-    case 'wrapped':
-      return `${protocol.name} wraps an asset that already trades${category}.`;
-    case 'staked':
-      return `${protocol.name} is a staking product${category}, so it holds an asset that already trades.`;
-    case 'restaked':
-      return `${protocol.name} restakes an asset that already trades${category}.`;
-    case 'bridged':
-      return `${protocol.name} is a bridge product${category}, so it moves an asset that already trades.`;
-    case 'exchange':
-      return `${protocol.name} is an exchange or an exchange's own product${category}.`;
-  }
-}
-
-/** The exclusion object for one row. */
-function exclusionFor(protocol: ProtocolRecord, code: ExclusionCode, token: string | null): Exclusion {
-  const rule = EXCLUSION_RULES[code];
-  return {
-    code,
-    label: rule.label,
-    summary: rule.summary,
-    detail: exclusionDetail(protocol, code, token),
-    source: rule.source,
-  };
-}
-
 /** The first exclusion a protocol earns, or null when it is a pre-token candidate. */
-function firstExclusion(protocol: ProtocolRecord, radarExtensions: boolean): ExclusionCode | null {
-  if (recordedToken(protocol) !== null) return 'token-recorded';
+function firstExclusion(protocol: Protocol, radarExtensions: boolean): ExclusionCode | null {
+  if (!(protocol.tvl_usd > 0)) return 'no-tvl';
+  if (tokenRecorded(protocol)) return 'token-recorded';
   if (VERSIONED.test(protocol.name)) return 'versioned';
   const byCategory = categoryRule(protocol.category, radarExtensions);
   if (byCategory !== null) return byCategory;
   return nameRule(protocol.name, radarExtensions);
+}
+
+/** The sentence the Set aside view shows for one row: the rule, and what it saw in this protocol. */
+function exclusionSentence(protocol: Protocol, code: ExclusionCode): string {
+  const category = protocol.category === null ? '' : ` (${protocol.category})`;
+  switch (code) {
+    case 'no-tvl':
+      return `${protocol.name} records no TVL, so no position can be sized and no number can be modelled.`;
+    case 'token-recorded':
+      return `${protocol.name} records ${recordedToken(protocol) ?? 'a token'}${protocol.mcap_usd !== null ? ` and a ${usdShort(protocol.mcap_usd)} market cap` : ''}, so its launch already happened.`;
+    case 'versioned':
+      return `${protocol.name} ends in a version marker, so it is a pool or a release of another protocol rather than one with a launch of its own.`;
+    case 'wrapped':
+      return `${protocol.name}${category} wraps an asset that already trades, so its token inherits that asset instead of launching a new one.`;
+    case 'staked':
+      return `${protocol.name}${category} is a staked position in an asset that already trades, so its receipt is a second name for one asset.`;
+    case 'restaked':
+      return `${protocol.name}${category} restakes an asset that already trades, so its receipt is a claim on that asset rather than a launch of its own.`;
+    case 'bridged':
+      return `${protocol.name}${category} represents an asset moved from another chain, so its supply is a claim on tokens that already exist.`;
+    case 'exchange':
+      return `${protocol.name}${category} is an exchange's own book or product, so the claim inside it is the exchange, not a new protocol.`;
+  }
+}
+
+/** The exclusion object for one row. */
+function exclusionFor(protocol: Protocol, code: ExclusionCode): Exclusion {
+  const rule = EXCLUSION_RULES[code];
+  return { code, label: rule.label, detail: exclusionSentence(protocol, code), source: rule.source };
 }
 
 /** How sure this row is genuinely a protocol still waiting on a token. */
@@ -369,9 +376,9 @@ function confidenceFor(tier: Tier, signals: SignalCode[]): Verdict['confidence']
 }
 
 /** The eligibility context for one snapshot: the floor, the house list as a set, and the rule mode. */
-export function createEligibilityContext(snapshot: EligibilitySnapshot, options: EligibilityOptions = {}): EligibilityContext {
+export function createEligibilityContext(snapshot: SnapshotLike, options: EligibilityOptions = {}): EligibilityContext {
   return {
-    floorUsd: snapshot.floor_usd,
+    floorUsd: snapshot.floor_usd ?? 0,
     watchlist: new Set(snapshot.watchlist),
     radarExtensions: options.radarExtensions ?? true,
   };
@@ -381,7 +388,7 @@ export function createEligibilityContext(snapshot: EligibilitySnapshot, options:
 const CONTEXTS = new WeakMap<object, EligibilityContext>();
 
 /** The cached context for a snapshot, in the default rule mode. */
-function contextFor(snapshot: EligibilitySnapshot): EligibilityContext {
+function contextFor(snapshot: SnapshotLike): EligibilityContext {
   const cached = CONTEXTS.get(snapshot);
   if (cached !== undefined) return cached;
   const context = createEligibilityContext(snapshot);
@@ -390,58 +397,47 @@ function contextFor(snapshot: EligibilitySnapshot): EligibilityContext {
 }
 
 /** Whether an argument is already a context rather than a snapshot. */
-function isContext(value: EligibilitySnapshot | EligibilityContext): value is EligibilityContext {
+function isContext(value: SnapshotLike | EligibilityContext): value is EligibilityContext {
   return 'floorUsd' in value && value.watchlist instanceof Set;
 }
 
 /**
- * The verdict on one protocol.
+ * What main.ts asks about one protocol: is it a subject of the radar, and if not, why not.
  *
- * `source` is the snapshot itself (the usual call, one protocol at a time) or a context from
- * createEligibilityContext for a non-default rule mode.
- *
- * A slug on the snapshot's watchlist comes back tier 'watchlist' and eligible, always: the gate's
- * coverage row is the house's, and a rule here that disagreed with it would cost the entry its
- * place. Every other protocol is decided by the rules in order, and the first that fires is the
- * one reported.
+ * `snapshot` supplies the watchlist, or a context from createEligibilityContext for a non-default
+ * rule mode. A watchlisted slug is always reported eligible: the gate requires every one of them on
+ * the board, and coverage outranks a name rule. Every other protocol is decided by the rules in
+ * order, and the first that fires is the one reported.
  */
-export function classifyProtocol(protocol: ProtocolRecord, source: EligibilitySnapshot | EligibilityContext): Verdict {
-  const context = isContext(source) ? source : contextFor(source);
+export function classifyProtocol(protocol: Protocol, snapshot: SnapshotLike | EligibilityContext): Verdict {
+  const context = isContext(snapshot) ? snapshot : contextFor(snapshot);
+  const onWatchlist = context.watchlist.has(protocol.slug);
   const belowFloor = protocol.tvl_usd < context.floorUsd;
-  const onHouseList = context.watchlist.has(protocol.slug);
+  const base = {
+    slug: protocol.slug,
+    name: protocol.name,
+    category: protocol.category,
+    tvl_usd: protocol.tvl_usd,
+    on_watchlist: onWatchlist,
+    below_floor: belowFloor,
+  };
 
-  if (onHouseList) {
+  if (onWatchlist) {
     const signals: SignalCode[] = ['house-list'];
     if (belowFloor) signals.push('below-floor');
     if (protocol.chains.length >= 3) signals.push('multi-chain');
-    return {
-      slug: protocol.slug,
-      name: protocol.name,
-      category: protocol.category,
-      tvl_usd: protocol.tvl_usd,
-      tier: 'watchlist',
-      eligible: true,
-      reason: '',
-      below_floor: belowFloor,
-      confidence: 'high',
-      exclusion: null,
-      signals,
-    };
+    return { ...base, eligible: true, reason: '', code: null, tier: 'watchlist', confidence: 'high', exclusion: null, signals };
   }
 
-  const token = recordedToken(protocol);
   const code = firstExclusion(protocol, context.radarExtensions);
   if (code !== null) {
-    const exclusion = exclusionFor(protocol, code, token);
+    const exclusion = exclusionFor(protocol, code);
     return {
-      slug: protocol.slug,
-      name: protocol.name,
-      category: protocol.category,
-      tvl_usd: protocol.tvl_usd,
-      tier: 'excluded',
+      ...base,
       eligible: false,
-      reason: exclusion.summary,
-      below_floor: belowFloor,
+      reason: exclusion.detail,
+      code,
+      tier: 'excluded',
       confidence: 'high',
       exclusion,
       signals: [],
@@ -456,22 +452,32 @@ export function classifyProtocol(protocol: ProtocolRecord, source: EligibilitySn
 
   const tier: Tier = 'radar';
   return {
-    slug: protocol.slug,
-    name: protocol.name,
-    category: protocol.category,
-    tvl_usd: protocol.tvl_usd,
-    tier,
+    ...base,
     eligible: true,
     reason: '',
-    below_floor: belowFloor,
+    code: null,
+    tier,
     confidence: confidenceFor(tier, signals),
     exclusion: null,
     signals,
   };
 }
 
+/** Every protocol the board would rank, for a caller that wants the split in one pass. */
+export function classifyAll(protocols: Protocol[], snapshot: SnapshotLike): { eligible: Protocol[]; excluded: Array<{ protocol: Protocol; code: ExclusionCode; reason: string }> } {
+  const context = contextFor(snapshot);
+  const eligible: Protocol[] = [];
+  const excluded: Array<{ protocol: Protocol; code: ExclusionCode; reason: string }> = [];
+  for (const protocol of protocols) {
+    const verdict = classifyProtocol(protocol, context);
+    if (verdict.eligible) eligible.push(protocol);
+    else excluded.push({ protocol, code: verdict.code ?? 'no-tvl', reason: verdict.reason });
+  }
+  return { eligible, excluded };
+}
+
 /** Whether one protocol is a rankable pre-token candidate under this snapshot's rules. */
-export function isEligible(protocol: ProtocolRecord, snapshot: EligibilitySnapshot, options: EligibilityOptions = {}): boolean {
+export function isEligible(protocol: Protocol, snapshot: SnapshotLike, options: EligibilityOptions = {}): boolean {
   const context = Object.keys(options).length === 0 ? contextFor(snapshot) : createEligibilityContext(snapshot, options);
   return classifyProtocol(protocol, context).eligible;
 }
@@ -479,6 +485,7 @@ export function isEligible(protocol: ProtocolRecord, snapshot: EligibilitySnapsh
 /** An empty count per exclusion code, so every key is present for the dashboard. */
 function emptyCounts(): Record<ExclusionCode, number> {
   return {
+    'no-tvl': 0,
     'token-recorded': 0,
     versioned: 0,
     wrapped: 0,
@@ -497,15 +504,15 @@ const TIER_ORDER: Record<Tier, number> = { watchlist: 0, radar: 1, excluded: 2 }
  * Classify a whole snapshot.
  *
  * `eligible` is what a board ranks: every house watchlist row first, then the radar's own rows by
- * TVL. `excluded` carries one reason each, grouped for the exclusions view. `conflicts` and
- * `missing` are the two ways coverage can break, and both should be empty.
+ * TVL. `excluded` carries one reason each, grouped for the Set aside view. `conflicts` and `missing`
+ * are the two ways coverage can break, and both should be empty.
  */
-export function classifyUniverse(snapshot: EligibilitySnapshot, options: EligibilityOptions = {}): EligibilityUniverse {
+export function classifyUniverse(snapshot: SnapshotLike & { protocols: Protocol[]; as_of?: string }, options: EligibilityOptions = {}): EligibilityUniverse {
   const context = createEligibilityContext(snapshot, options);
   const verdicts = snapshot.protocols.map((protocol) => classifyProtocol(protocol, context));
   const counts = emptyCounts();
   for (const verdict of verdicts) {
-    if (verdict.exclusion !== null) counts[verdict.exclusion.code] += 1;
+    if (verdict.code !== null) counts[verdict.code] += 1;
   }
 
   const eligible = verdicts.filter((v) => v.eligible).sort((a, b) => TIER_ORDER[a.tier] - TIER_ORDER[b.tier] || byTvlThenSlug(a, b));
@@ -522,11 +529,9 @@ export function classifyUniverse(snapshot: EligibilitySnapshot, options: Eligibi
     else watchlistVerdicts.push(verdict);
   }
 
-  const tokenless = snapshot.protocols.filter((protocol) => recordedToken(protocol) === null).length;
-
   return {
-    as_of: snapshot.as_of,
-    floor_usd: snapshot.floor_usd,
+    as_of: snapshot.as_of ?? '',
+    floor_usd: snapshot.floor_usd ?? 0,
     verdicts,
     eligible,
     excluded,
@@ -534,7 +539,7 @@ export function classifyUniverse(snapshot: EligibilitySnapshot, options: Eligibi
     counts,
     stats: {
       protocols: verdicts.length,
-      tokenless,
+      tokenless: snapshot.protocols.filter((protocol) => !tokenRecorded(protocol)).length,
       watchlist: snapshot.watchlist.length,
       rankable: eligible.length,
       rankable_above_floor: eligible.filter((v) => !v.below_floor).length,
@@ -585,11 +590,11 @@ export function summaryLine(universe: EligibilityUniverse): string {
   );
 }
 
-/** The rows the dashboard's exclusions view groups by rule, largest group first. */
+/** The exclusions grouped by rule, largest group first, for the dashboard's Set aside view. */
 export function exclusionsByRule(universe: EligibilityUniverse): Array<{ rule: ExclusionRule; verdicts: Verdict[] }> {
   const groups: Array<{ rule: ExclusionRule; verdicts: Verdict[] }> = [];
   for (const code of Object.keys(EXCLUSION_RULES) as ExclusionCode[]) {
-    const verdicts = universe.excluded.filter((v) => v.exclusion?.code === code);
+    const verdicts = universe.excluded.filter((v) => v.code === code);
     if (verdicts.length > 0) groups.push({ rule: EXCLUSION_RULES[code], verdicts });
   }
   return groups.sort((a, b) => b.verdicts.length - a.verdicts.length);
