@@ -8,7 +8,7 @@
   --line-2: #2a3c3e;
   --text: #e7efeb;
   --muted: #93a8a3;
-  --dim: #5f746f;
+  --dim: #819691; /* clears 4.5:1 against --panel-2, the lightest surface dim text sits on */
   --accent: #b6f24a;
   --accent-dim: #6f9b2c;
   --pos: #79e08a;
@@ -69,6 +69,12 @@ a:hover { color: var(--accent); }
 .nav a[aria-current="page"] { background: var(--panel-2); color: var(--accent); }
 .stamp { color: var(--dim); font: 400 11px/1.2 var(--mono); text-align: right; white-space: nowrap; }
 
+/* Lede strip */
+.lede { display: flex; align-items: center; gap: var(--s4); padding: 10px var(--s5); border-bottom: 1px solid var(--line); background: var(--panel); }
+.lede p { color: var(--muted); font-size: 12.5px; line-height: 1.45; max-width: 108ch; }
+.lede b { color: var(--text); font-weight: 600; }
+.lede .button { margin-left: auto; white-space: nowrap; flex: none; }
+
 /* Figures strip */
 .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--line); }
 .kpi { padding: 14px var(--s5); border-right: 1px solid var(--line); display: grid; gap: 4px; }
@@ -78,15 +84,19 @@ a:hover { color: var(--accent); }
 .kpi em { color: var(--muted); font: 400 11px/1.3 var(--sans); font-style: normal; }
 
 /* Filters */
-.filters { display: flex; flex-wrap: wrap; align-items: end; gap: var(--s2); padding: var(--s3) var(--s5); border-bottom: 1px solid var(--line); background: var(--panel); }
-.field { display: grid; gap: 5px; }
+.filters {
+  display: grid; grid-template-columns: minmax(0, 1.35fr) repeat(6, minmax(0, 1fr)) auto;
+  align-items: end; gap: var(--s2);
+  padding: var(--s3) var(--s5); border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.field { display: grid; gap: 5px; min-width: 0; }
 .field > label, .field > span { color: var(--dim); font: 500 10px/1 var(--sans); letter-spacing: 0.09em; text-transform: uppercase; }
 .field input, .field select {
-  height: 32px; padding: 0 9px; min-width: 132px;
+  height: 32px; padding: 0 8px; width: 100%; min-width: 0;
   background: var(--canvas); color: var(--text);
   border: 1px solid var(--line-2); border-radius: var(--r-sm);
+  text-overflow: ellipsis;
 }
-.field input[type="search"] { min-width: 236px; }
 .field input::placeholder { color: var(--dim); }
 .field input:focus, .field select:focus { border-color: var(--accent-dim); outline: none; }
 .filters .spacer { margin-left: auto; }
@@ -102,9 +112,12 @@ a:hover { color: var(--accent); }
 
 /* Board table */
 .table-wrap { overflow: auto; max-height: calc(100vh - 218px); }
+/* The wrapper scrolls, so it needs its own tab stop: otherwise a keyboard reader can never reach the
+   columns past the edge, and the region has no name to announce. */
+.table-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 caption { caption-side: top; text-align: left; padding: 10px var(--s5); color: var(--dim); font-size: 11px; }
-th, td { padding: 0 var(--s3); height: 40px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
+th, td { padding: 0 var(--s3); height: 46px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
 thead th {
   position: sticky; top: 0; z-index: 2; height: 32px;
   background: var(--panel-2); color: var(--dim);
@@ -124,10 +137,10 @@ td.rank b { color: var(--text); font-weight: 500; }
 .who { display: grid; gap: 1px; min-width: 190px; }
 .who b { font-weight: 600; font-size: 13px; }
 .who span { color: var(--dim); font-size: 11px; }
-.implied-cell { display: grid; gap: 3px; justify-items: end; }
+.implied-cell { display: grid; gap: 5px; justify-items: end; }
 .implied-cell b { font: 500 13px/1 var(--mono); color: var(--accent); }
 .bar { width: 96px; height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }
-.bar i { display: block; height: 100%; background: var(--accent); }
+.bar i { display: block; height: 100%; background: var(--accent-dim); }
 .mult { color: var(--dim); font: 400 10.5px/1 var(--mono); }
 .chip {
   display: inline-flex; align-items: center; gap: 4px;
@@ -201,15 +214,26 @@ ol.steps p { font-size: 12.5px; line-height: 1.45; }
 .prose h2 { padding-top: var(--s3); }
 .prose p, .prose li { color: var(--muted); font-size: 13px; line-height: 1.55; }
 .prose strong { color: var(--text); font-weight: 600; }
-.formula { padding: var(--s3); border: 1px solid var(--line); border-left: 2px solid var(--accent-dim); border-radius: var(--r-sm); background: var(--panel); color: var(--text); font: 400 12px/1.7 var(--mono); overflow-wrap: anywhere; }
+.formula { padding: var(--s3); border: 1px solid var(--line); border-left: 2px solid var(--accent-dim); border-radius: var(--r-sm); background: var(--panel); color: var(--text); font: 400 12px/1.7 var(--mono); overflow-wrap: anywhere; white-space: pre-wrap; }
 .constants { width: auto; font-size: 12px; }
+.table-wrap > table.constants { width: 100%; }
+.pad h1 { margin-top: 6px; }
 .constants th, .constants td { height: 30px; }
 .constants td:last-child { font-family: var(--mono); text-align: right; }
+.constants td.text { font-family: var(--sans); text-align: left; white-space: normal; }
 .rules { display: grid; gap: var(--s3); padding-left: var(--s5); }
 .rules li { color: var(--muted); font-size: 13px; line-height: 1.5; }
 .rules b { color: var(--text); font-family: var(--mono); font-weight: 500; }
 .empty { padding: var(--s7) var(--s5); display: grid; gap: var(--s3); justify-items: start; max-width: 60ch; }
 .foot { padding: var(--s5); border-top: 1px solid var(--line); color: var(--dim); font-size: 11px; display: flex; justify-content: space-between; gap: var(--s4); flex-wrap: wrap; }
+
+.chip.farm { border-color: #3c5c1e; color: var(--accent); background: rgba(182, 242, 74, 0.07); }
+.chip.watch { border-color: #4a3f22; color: var(--warn); }
+.chip.skip { border-color: var(--line-2); color: var(--dim); }
+.verdict-note { font-size: 12.5px; line-height: 1.45; color: var(--text); margin-bottom: 10px; }
+.note { font-size: 12px; line-height: 1.45; margin-top: 10px; }
+.prose .constants td:last-child:not(.text) { text-align: right; }
+.pad > p { max-width: 100ch; color: var(--muted); font-size: 13px; line-height: 1.55; }
 
 @media (max-width: 1080px) {
   .two-col { grid-template-columns: 1fr; }

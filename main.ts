@@ -142,10 +142,15 @@ export interface BoardRow {
   on_watchlist: boolean;
   age_days: number | null;
   implied_value_usd: number;
-  confidence: { low_usd: number; high_usd: number; level: number };
+  confidence: { low_usd: number; high_usd: number; level: number; reasons: string[] };
   model: {
     peer_multiple: number;
     peer_count: number;
+    peer_low_multiple: number;
+    peer_high_multiple: number;
+    peer_source: 'category' | 'blended' | 'global';
+    base_usd: number;
+    band_widened_by: number;
     growth_multiplier: number;
     maturity_multiplier: number;
     rationale: string;
@@ -218,7 +223,7 @@ function boardSteps(plan: Plan): string[] {
 }
 
 /** The whole board: every protocol the modules would rank, priced, planned and sorted by implied value. */
-export function assembleBoard(snapshot: Snapshot): { rows: BoardRow[]; excluded: Exclusion[]; live: LiveRow[] } {
+export function assembleBoard(snapshot: Snapshot): { rows: BoardRow[]; excluded: Exclusion[]; live: LiveRow[]; peers: ReturnType<typeof buildPeerModel> } {
   const peers = buildPeerModel(snapshot);
   const watchlist = new Set(snapshot.watchlist);
   const scored: Array<Omit<BoardRow, 'rank'>> = [];
@@ -256,8 +261,9 @@ export function assembleBoard(snapshot: Snapshot): { rows: BoardRow[]; excluded:
     const plan = farmPlan(protocol, valuation, valuation.age_days ?? null);
     const steps = boardSteps(plan);
     if (steps.length < STEPS_MIN) throw new Error(`${protocol.slug} got ${steps.length} usable farm steps: the gate needs ${STEPS_MIN} to ${STEPS_MAX}`);
-    const confidence = valuation.confidence ?? { low_usd: 0, high_usd: 0, level: 0 };
+    const confidence = valuation.confidence ?? { low_usd: 0, high_usd: 0, level: 0, reasons: [] as string[] };
     const implied = Math.round(clamp(finite(valuation.implied_value_usd, 0), 1, IMPLIED_MAX_USD));
+    const source = valuation.model?.peer_source;
     scored.push({
       slug: protocol.slug,
       name: protocol.name,
@@ -277,10 +283,16 @@ export function assembleBoard(snapshot: Snapshot): { rows: BoardRow[]; excluded:
         low_usd: Math.round(clamp(finite(confidence.low_usd, implied * 0.5), 0, IMPLIED_MAX_USD)),
         high_usd: Math.round(clamp(finite(confidence.high_usd, implied * 1.5), 0, IMPLIED_MAX_USD)),
         level: round4(clamp(finite(confidence.level, 0.5), 0, 1)),
+        reasons: (Array.isArray(confidence.reasons) ? confidence.reasons : []).map(String).slice(0, 4),
       },
       model: {
         peer_multiple: round4(finite(valuation.peer_multiple, 0)),
         peer_count: Math.max(0, Math.round(finite(valuation.peer_count, 0))),
+        peer_low_multiple: round4(finite(valuation.model?.peer_low_multiple, 0)),
+        peer_high_multiple: round4(finite(valuation.model?.peer_high_multiple, 0)),
+        peer_source: source === 'category' || source === 'blended' || source === 'global' ? source : 'global',
+        base_usd: Math.round(clamp(finite(valuation.model?.base_usd, implied), 0, IMPLIED_MAX_USD)),
+        band_widened_by: round4(clamp(finite(valuation.model?.band_widened_by, 0), 0, 1)),
         growth_multiplier: round4(finite(valuation.growth_multiplier, 1)),
         maturity_multiplier: round4(finite(valuation.maturity_multiplier, 1)),
         rationale: typeof valuation.rationale === 'string' ? valuation.rationale : '',
@@ -311,7 +323,7 @@ export function assembleBoard(snapshot: Snapshot): { rows: BoardRow[]; excluded:
     .slice(0, LIVE_ROWS)
     .map((p) => ({ slug: p.slug, name: p.name, category: p.category, chains: p.chains, tvl_usd: p.tvl_usd, mcap_usd: p.mcap_usd, change_7d: p.change_7d }));
 
-  return { rows, excluded, live };
+  return { rows, excluded, live, peers };
 }
 
 // ---------------------------------------------------------------- the gate's rules, checked here
@@ -349,7 +361,7 @@ export function boardIssue(rows: BoardRow[], snapshot: Snapshot): string | null 
 // ---------------------------------------------------------------- the dashboard's data
 
 /** The board as the page reads it: the gate's fields, the model's inputs, and the plan, one object. */
-function radarData(snapshot: Snapshot, rows: BoardRow[], excluded: Exclusion[], live: LiveRow[]): Record<string, unknown> {
+function radarData(snapshot: Snapshot, rows: BoardRow[], excluded: Exclusion[], live: LiveRow[], peers: ReturnType<typeof buildPeerModel>): Record<string, unknown> {
   const byCode = new Map<string, { count: number; reason: string }>();
   for (const e of excluded) {
     const found = byCode.get(e.code);
@@ -382,6 +394,11 @@ function radarData(snapshot: Snapshot, rows: BoardRow[], excluded: Exclusion[], 
       confidence: { ...r.confidence, label: r.confidence.level >= 0.45 ? 'high' : r.confidence.level >= 0.2 ? 'medium' : 'low' },
       peer_multiple: r.model.peer_multiple,
       peer_count: r.model.peer_count,
+      peer_source: r.model.peer_source,
+      peer_low_multiple: r.model.peer_low_multiple,
+      peer_high_multiple: r.model.peer_high_multiple,
+      base_usd: r.model.base_usd,
+      band_widened_by: r.model.band_widened_by,
       growth_multiplier: r.model.growth_multiplier,
       maturity_multiplier: r.model.maturity_multiplier,
       rationale: r.model.rationale,
@@ -389,6 +406,12 @@ function radarData(snapshot: Snapshot, rows: BoardRow[], excluded: Exclusion[], 
       farm_steps: r.farm_steps,
     })),
     live,
+    peers: {
+      model_version: peers.model_version,
+      observations: peers.observations,
+      global: peers.global,
+      categories: Object.values(peers.categories).sort((a, b) => b.sample - a.sample || (a.label < b.label ? -1 : 1)),
+    },
     excluded: excluded.map((e) => ({ slug: e.slug, name: e.name, reason: e.reason })),
     exclusions: {
       count: excluded.length,
@@ -470,7 +493,7 @@ if (!existsSync(inputFile)) {
 const out = arg('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
 
 const snapshot = parseSnapshot(readFileSync(inputFile, 'utf8'));
-const { rows, excluded, live } = assembleBoard(snapshot);
+const { rows, excluded, live, peers } = assembleBoard(snapshot);
 const issue = boardIssue(rows, snapshot);
 if (issue !== null) {
   process.stderr.write(`token radar: the model wrote a board the gate refuses: ${issue}\n`);
@@ -479,7 +502,7 @@ if (issue !== null) {
 
 mkdirSync(out, { recursive: true });
 writeFileSync(join(out, 'board.json'), `${JSON.stringify({ as_of: snapshot.as_of, source: snapshot.source, floor_usd: snapshot.floor_usd, rows })}\n`);
-writeFileSync(join(out, 'data.js'), dataScript(radarData(snapshot, rows, excluded, live)));
+writeFileSync(join(out, 'data.js'), dataScript(radarData(snapshot, rows, excluded, live, peers)));
 
 const dashIssue = dashboardIssue(join(here, 'dashboard'));
 if (dashIssue !== null) {

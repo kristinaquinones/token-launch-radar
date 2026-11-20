@@ -235,6 +235,10 @@ export function actionFor(p: FarmProtocol, capital: number, chain: string): stri
   if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) {
     return `Supply ${usd(capital)} of USDC to ${name} on ${chain}, borrow a small amount against it, and keep both positions open.`;
   }
+  if (c.includes('index')) {
+    // Before the dex branch: "Indexes" contains "dex", which would otherwise read as a liquidity pool.
+    return `Buy ${usd(capital)} of ${name}'s index on ${chain} and hold it through the window.`;
+  }
   if (c.includes('dex') || c.includes('yield') || c.includes('leveraged farm')) {
     return `Provide ${usd(capital)} of liquidity to ${name}'s deepest pool on ${chain}, and swap once a week so the activity is not a single deposit.`;
   }
@@ -264,6 +268,36 @@ export function actionFor(p: FarmProtocol, capital: number, chain: string): stri
   }
   if (c.includes('launchpad') || c.includes('launch')) {
     return `Deposit ${usd(capital)} into ${name} on ${chain} and take part in one launch it runs while you hold.`;
+  }
+  if (c.includes('basis')) {
+    return `Deposit ${usd(capital)} of USDC into ${name} on ${chain} and hold its delta-neutral basis position for the whole window.`;
+  }
+  if (c.includes('liquidity manager')) {
+    return `Open a ${usd(capital)} liquidity position through ${name} on ${chain} and let its manager rebalance it while you hold.`;
+  }
+  if (c.includes('governance')) {
+    return `Take part in one ${name} governance vote on ${chain} with the position you fund here, and claim its incentives from the protocol's own page.`;
+  }
+  if (c.includes('otc')) {
+    return `Post one small order of about ${usd(capital)} on ${name} on ${chain} and fill it, so the wallet has a filled trade and not only a deposit.`;
+  }
+  if (c.includes('payments')) {
+    return `Send and receive about ${usd(capital)} through ${name} on ${chain}, and keep a working balance there so the activity repeats.`;
+  }
+  if (c.includes('card')) {
+    return `Open an account with ${name} on ${chain}, fund it with ${usd(capital)} of USDC and spend a small amount through it each week.`;
+  }
+  if (c.includes('btc') || c.includes('bitcoin')) {
+    return `Mint or deposit ${usd(capital)} of ${name}'s BTC receipt on ${chain} against BTC you already hold, and keep the receipt in the same wallet.`;
+  }
+  if (c.includes('cedefi')) {
+    return `Deposit ${usd(capital)} of USDC into ${name}'s product on ${chain} and keep the position open through the window.`;
+  }
+  if (c.includes('farm')) {
+    return `Deposit ${usd(capital)} of USDC into ${name}'s farm on ${chain}, and claim and restake the rewards it pays rather than leaving them unclaimed.`;
+  }
+  if (c === 'chain') {
+    return `Bridge ${usd(capital)} of USDC onto ${name}, and use one app on it through the window, because a chain's own record grows from activity on it.`;
   }
   return `Deposit ${usd(capital)} of USDC into ${name} on ${chain} and keep the position open.`;
 }
