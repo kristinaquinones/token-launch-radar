@@ -11,8 +11,10 @@ Everything here is computed from `input/snapshot.json`. There is no hardcoded li
 ## Run it
 
 ```sh
-node main.ts --input input/snapshot.json --output out
+mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
 ```
+
+(`--output out` works too; the snapshot is the kit's `input/snapshot.json`, not committed here.)
 
 At grade time the program reads `/input/snapshot.json` and writes `/output`; `--input` and `--output` (or `MAKEFUN_OUTPUT_DIR`) exist so it can be run by hand. Node 22.18 or later runs the TypeScript as it is.
 
