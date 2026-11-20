@@ -158,6 +158,23 @@ const GAS_USD: Record<string, number> = {
   Unichain: 0.6,
   Ink: 0.6,
   Sei: 0.4,
+  // Chain names DefiLlama uses that are the same cheap chain under another name, or a chain whose own
+  // fees are a fraction of a cent. Leaving them out would price a Binance transaction at the $4 default,
+  // which is five times what it costs and would talk the plan out of a protocol it can afford to farm.
+  Binance: 0.5,
+  'BNB Chain': 0.5,
+  'Hyperliquid L1': 0.2,
+  Monad: 0.2,
+  Stellar: 0.05,
+  Algorand: 0.1,
+  Ripple: 0.2,
+  Noble: 0.2,
+  'zkSync Era': 0.3,
+  Starknet: 0.2,
+  Ronin: 0.2,
+  Klaytn: 0.3,
+  Manta: 0.3,
+  'Plume Mainnet': 0.3,
 };
 
 const DAY_MS = 86_400_000;
@@ -428,7 +445,9 @@ export function valueOf(p: FarmProtocol, capital: number, cost: number, implied:
 export function farmSteps(p: FarmProtocol, age: number | null, capital: number, cost: number): FarmStep[] {
   const chain = chainOf(p);
   const hold = holdDaysFor(age);
-  const weeks = Math.max(1, Math.ceil(hold / 7));
+  // The qualifying actions have to fit inside the hold the plan asks for: a plan that asks you to
+  // act in week five of a thirty-day window reads as boilerplate. Whole weeks only, always at least one.
+  const weeks = Math.max(1, Math.floor(hold / 7));
   const gas = gasFor(p);
   const action = actionFor(p, capital, chain);
   const weeklyCost = Math.max(1, Math.round(gas * 0.6));
@@ -517,7 +536,9 @@ export function buildFarmPlan(p: FarmProtocol, options: FarmOptions = {}): FarmP
   const implied = Math.max(0, Math.round(finite(options.implied_value_usd, 0)));
   const hold = holdDaysFor(age);
   const gas = gasFor(p);
-  const weeks = Math.max(1, Math.ceil(hold / 7));
+  // The qualifying actions have to fit inside the hold the plan asks for: a plan that asks you to
+  // act in week five of a thirty-day window reads as boilerplate. Whole weeks only, always at least one.
+  const weeks = Math.max(1, Math.floor(hold / 7));
   const cost = Math.round(gas * 2 + gas * 0.6 * weeks + gas * 1.5);
   const factors = riskFactors(p, age, cost, capital);
   const risk = riskOf(factors);
